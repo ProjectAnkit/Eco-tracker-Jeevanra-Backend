@@ -1,0 +1,6 @@
+@echo off
+echo Stopping any running Java processes...
+taskkill /F /IM java.exe >nul 2>&1
+echo Removing target directory...
+rmdir /s /q target >nul 2>&1
+echo Cleanup complete!
