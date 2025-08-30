@@ -1,21 +1,18 @@
 package com.ProjectAnkit.EcoTracker.service;
 
-import com.ProjectAnkit.EcoTracker.entity.User;
-import com.ProjectAnkit.EcoTracker.repository.UserRepository;
-import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.security.Keys;
-import io.jsonwebtoken.SignatureAlgorithm;
+import java.nio.charset.StandardCharsets;
+import java.util.Date;
+import java.util.Optional;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
-import javax.crypto.KeyGenerator;
-import java.nio.charset.StandardCharsets;
-import java.security.NoSuchAlgorithmException;
-import java.util.Base64;
-import java.util.Date;
-import java.util.Optional;
+import com.ProjectAnkit.EcoTracker.entity.User;
+import com.ProjectAnkit.EcoTracker.repository.UserRepository;
+
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.SignatureAlgorithm;
 
 @Service
 public class AuthService {
@@ -67,26 +64,25 @@ public class AuthService {
 
     private String generateJwt(User user) {
         try {
-            // First try to decode the secret as Base64
-            byte[] keyBytes;
-            try {
-                keyBytes = Base64.getDecoder().decode(jwtSecret);
-                if (keyBytes.length < 32) { // Minimum key length for HS512
-                    throw new IllegalArgumentException("Decoded key is too short for HS512");
-                }
-            } catch (IllegalArgumentException e) {
-                // If Base64 decode fails, use the secret as is
-                keyBytes = jwtSecret.getBytes(StandardCharsets.UTF_8);
+            // Use the secret directly as bytes for HMAC-SHA256
+            byte[] keyBytes = jwtSecret.getBytes(StandardCharsets.UTF_8);
+            
+            // Ensure minimum key length for HMAC-SHA256
+            if (keyBytes.length < 32) {
+                // Pad the key if it's too short
+                byte[] paddedKey = new byte[32];
+                System.arraycopy(keyBytes, 0, paddedKey, 0, Math.min(keyBytes.length, 32));
+                keyBytes = paddedKey;
             }
             
-            java.security.Key key = new javax.crypto.spec.SecretKeySpec(keyBytes, "HmacSHA512");
+            java.security.Key key = new javax.crypto.spec.SecretKeySpec(keyBytes, "HmacSHA256");
             
             return Jwts.builder()
                     .setSubject(user.getEmail())
                     .claim("id", user.getId())
                     .setIssuedAt(new Date())
                     .setExpiration(new Date(System.currentTimeMillis() + 86400000)) // 24 hours
-                    .signWith(key, SignatureAlgorithm.HS512)
+                    .signWith(key, SignatureAlgorithm.HS256)
                     .compact();
         } catch (Exception e) {
             throw new RuntimeException("Failed to generate JWT token: " + e.getMessage(), e);

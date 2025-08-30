@@ -1,11 +1,11 @@
 package com.ProjectAnkit.EcoTracker.controller;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -34,11 +34,17 @@ public class ActivityController {
 
     @PostMapping
     public ResponseEntity<?> trackActivity(@RequestBody Map<String, Object> body) {
-        String email = SecurityContextHolder.getContext().getAuthentication().getName();
+        String email = (String) body.get("email");
+        if (email == null || email.trim().isEmpty()) {
+            return ResponseEntity.badRequest()
+                .body(Map.of("error", "Email is required in the request body"));
+        }
+        
         User user = userRepository.findByEmail(email)
                 .orElse(null);
         if (user == null) {
-            return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
+            return ResponseEntity.badRequest()
+                .body(Map.of("error", "User not found with email: " + email));
         }
 
         try {
@@ -46,56 +52,77 @@ public class ActivityController {
             activity.setUser(user);
             activity.setType((String) body.get("type"));
             activity.setDetails("{\"units\": " + body.get("units") + "}");
-            activity.setEmissionsKg(calculatorService.calculate(activity.getType(), ((Number) body.get("units")).doubleValue()));
+            double units = ((Number) body.get("units")).doubleValue();
+            double emissions = calculatorService.calculate(activity.getType(), units);
+            activity.setEmissionsKg(emissions);
             activity.setTimestamp(LocalDateTime.now());
             Activity savedActivity = activityRepository.save(activity);
             
             if (savedActivity.getId() == null) {
-                return ResponseEntity.status(500).body(Map.of("error", "Failed to save activity"));
+                return ResponseEntity.status(500)
+                    .body(Map.of("error", "Failed to save activity"));
             }
             
-            return ResponseEntity.ok(Map.of(
-                "message", "Activity tracked", 
-                "emissions", savedActivity.getEmissionsKg(),
-                "activityId", savedActivity.getId()
-            ));
+            // Update user's total emissions and points based on this activity
+            try {
+                double newTotalEmissions = (user.getCo2Saved() == 0 ? 0 : user.getCo2Saved()) + emissions;
+                user.setCo2Saved(newTotalEmissions); // Note: Renaming suggestion in comments below
+                
+                // New points system: Reward low-emission choices with more points.
+                // Greenness = 1 / factor (higher for low-emission categories)
+                // Points = greenness * units * 10 (scaled, rounded, min 1)
+                // This encourages choosing/using low-emission options (e.g., train over car, plant over meat)
+                double factor = emissions / units; // Derive factor (assumes units > 0)
+                double greenness = (factor > 0) ? 1.0 / factor : 0.0;
+                int pointsEarned = (int) Math.max(1, Math.round(greenness * units * 10));
+                user.setPoints(user.getPoints() + pointsEarned);
+                userRepository.save(user);
+            } catch (Exception e) { /* ignore partial update errors */ }
+            
+            return ResponseEntity.ok()
+                .body(Map.of(
+                    "message", "Activity tracked", 
+                    "emissions", savedActivity.getEmissionsKg(),
+                    "activityId", savedActivity.getId(),
+                    "userTotalEmissions", user.getCo2Saved(), // Note: Renaming suggestion in comments
+                    "userPoints", user.getPoints()
+                ));
         } catch (Exception e) {
-            return ResponseEntity.status(500).body(Map.of("error", "Error tracking activity: " + e.getMessage()));
+            return ResponseEntity.status(500)
+                .body(Map.of("error", "Error tracking activity: " + e.getMessage()));
         }
     }
     
     @GetMapping("/recent")
-    public ResponseEntity<?> getRecentActivities(
+    public List<Activity> getRecentActivities(
+            @RequestParam String email,
             @RequestParam(defaultValue = "3") int limit) {
-        String email = SecurityContextHolder.getContext().getAuthentication().getName();
+        
+        if (email == null || email.trim().isEmpty()) {
+            throw new RuntimeException("Email is required");
+        }
+        
         User user = userRepository.findByEmail(email).orElse(null);
-        
         if (user == null) {
-            return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
+            throw new RuntimeException("User not found with email: " + email);
         }
         
-        try {
-            List<Activity> activities = activityRepository.findRecentActivitiesWithLimit(user.getId(), limit);
-            return ResponseEntity.ok(activities);
-        } catch (Exception e) {
-            return ResponseEntity.status(500).body(Map.of("error", "Error fetching activities: " + e.getMessage()));
-        }
+        List<Activity> activities = activityRepository.findRecentActivitiesWithLimit(user.getId(), limit);
+        return activities != null ? activities : new ArrayList<>();
     }
     
     @GetMapping("/all")
-    public ResponseEntity<?> getAllActivities() {
-        String email = SecurityContextHolder.getContext().getAuthentication().getName();
+    public List<Activity> getAllActivities(@RequestParam String email) {
+        if (email == null || email.trim().isEmpty()) {
+            throw new RuntimeException("Email is required");
+        }
+        
         User user = userRepository.findByEmail(email).orElse(null);
-        
         if (user == null) {
-            return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
+            throw new RuntimeException("User not found with email: " + email);
         }
         
-        try {
-            List<Activity> activities = activityRepository.findRecentActivities(user.getId());
-            return ResponseEntity.ok(activities);
-        } catch (Exception e) {
-            return ResponseEntity.status(500).body(Map.of("error", "Error fetching activities: " + e.getMessage()));
-        }
+        List<Activity> activities = activityRepository.findRecentActivities(user.getId());
+        return activities != null ? activities : new ArrayList<>();
     }
 }

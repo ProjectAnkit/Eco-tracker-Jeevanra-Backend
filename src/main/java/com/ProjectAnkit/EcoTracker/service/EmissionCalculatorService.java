@@ -20,4 +20,9 @@ public class EmissionCalculatorService {
     public double calculate(String category, double units) {
         return factors.getOrDefault(category, 0.0) * units;
     }
+
+    // Added getter for factors map (useful for other services/controllers if needed)
+    public Map<String, Double> getFactors() {
+        return factors;
+    }
 }
